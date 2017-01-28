@@ -402,9 +402,10 @@ class FractionWidget(TextWidget, DynamicWidget):
         elif not hasattr(value, "denom"):
             value = Gst.Fraction(value)
         if (value.denom / 1001) == 1:
-            text = "%gM" % (value.num / 1000)
+            text = ("%fM" % (value.num / 1000)).rstrip('0').rstrip('.')
         else:
-            text = "%g:%g" % (value.num, value.denom)
+            text = ("%f" % value.num).rstrip('0').rstrip('.')
+            text += (":%f" % value.denom).rstrip('0').rstrip('.')
 
         self.text.set_text(text)
 
