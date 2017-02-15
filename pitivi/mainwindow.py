@@ -23,8 +23,10 @@ from time import time
 from urllib.parse import unquote
 
 from gi.repository import Gdk
+from gi.repository import GdkPixbuf
 from gi.repository import GES
 from gi.repository import Gio
+from gi.repository import GLib
 from gi.repository import Gst
 from gi.repository import GstPbutils
 from gi.repository import Gtk
@@ -49,6 +51,7 @@ from pitivi.titleeditor import TitleEditor
 from pitivi.transitions import TransitionsListWidget
 from pitivi.utils.loggable import Loggable
 from pitivi.utils.misc import path_from_uri
+from pitivi.utils.misc import quote_uri
 from pitivi.utils.misc import show_user_manual
 from pitivi.utils.ui import beautify_length
 from pitivi.utils.ui import beautify_time_delta
@@ -934,16 +937,10 @@ class MainWindow(Gtk.ApplicationWindow, Loggable):
         hbox.set_orientation(Gtk.Orientation.HORIZONTAL)
         hbox.set_spacing(SPACING)
 
-        # Check if we have a thumbnail available.
-        # This can happen if the file was moved or deleted by an application
-        # that does not manage Freedesktop thumbnails. The user is in luck!
-        # This is based on medialibrary's addDiscovererInfo method.
-        thumbnail_hash = md5(uri.encode()).hexdigest()
-        thumb_dir = os.path.expanduser("~/.thumbnails/normal/")
-        thumb_path_normal = thumb_dir + thumbnail_hash + ".png"
-        if os.path.exists(thumb_path_normal):
+        small_thumb, large_thumb = self._get_thumbnails_from_xdg_cache(uri)
+        if large_thumb:
             self.debug("A thumbnail file was found for %s", uri)
-            thumbnail = Gtk.Image.new_from_file(thumb_path_normal)
+            thumbnail = Gtk.Image.new_from_pixbuf(large_thumb)
             thumbnail.set_padding(0, SPACING)
             hbox.pack_start(thumbnail, False, False, 0)
 
@@ -1015,6 +1012,44 @@ class MainWindow(Gtk.ApplicationWindow, Loggable):
 
         dialog.destroy()
         return new_uri
+
+    def _get_thumbnails_from_xdg_cache(self, real_uri):
+        """Gets pixbufs for the specified thumbnail from the user's cache dir.
+
+        Looks for thumbnails according to the [Thumbnail Managing Standard](https://specifications.freedesktop.org/thumbnail-spec/thumbnail-spec-latest.html#DIRECTORY).
+
+        Args:
+            real_uri (str): The URI of the asset.
+
+        Returns:
+            List[GdkPixbuf.Pixbuf]: The small thumbnail and the large thumbnail,
+            if available in the user's cache directory, otherwise (None, None).
+        """
+        quoted_uri = quote_uri(real_uri)
+        thumbnail_hash = md5(quoted_uri.encode()).hexdigest()
+        thumb_dir = os.path.join(GLib.get_user_cache_dir(), "thumbnails")
+        path_128 = os.path.join(thumb_dir, "normal", thumbnail_hash + ".png")
+        interpolation = GdkPixbuf.InterpType.BILINEAR
+
+        # The cache dirs might have resolutions of 256 and/or 128,
+        # while we need 128 (for iconview) and 64 (for listview).
+        # First, try the 128 version since that's the native resolution we want.
+        try:
+            large_thumb = GdkPixbuf.Pixbuf.new_from_file(path_128)
+            w, h = large_thumb.get_width(), large_thumb.get_height()
+            small_thumb = large_thumb.scale_simple(w / 2, h / 2, interpolation)
+            return small_thumb, large_thumb
+        except GLib.GError:
+            # path_128 doesn't exist, try the 256 version.
+            path_256 = os.path.join(thumb_dir, "large", thumbnail_hash + ".png")
+            try:
+                thumb_256 = GdkPixbuf.Pixbuf.new_from_file(path_256)
+                w, h = thumb_256.get_width(), thumb_256.get_height()
+                large_thumb = thumb_256.scale_simple(w / 2, h / 2, interpolation)
+                small_thumb = thumb_256.scale_simple(w / 4, h / 4, interpolation)
+                return small_thumb, large_thumb
+            except GLib.GError:
+                return None, None
 
     def _connectToProject(self, project):
         # FIXME GES we should re-enable this when possible
